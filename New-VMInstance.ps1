@@ -1,5 +1,5 @@
  # Author: Tadhg O Briain
-# Date last modified: 27/05/2019
+# Date last modified: 06/06/2019
 Function New-VMInstance {     
     <#
     .Synopsis
@@ -58,16 +58,40 @@ Function New-VMInstance {
 
     Begin { 
         $CMDB = Get-Content -Raw -Path $ConfigurationFile | ConvertFrom-Json
-        If (!(Get-PowerCLIConfiguration -Scope AllUsers).ParticipateInCEIP){
-            Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP $False -Confirm:$False
-        }
+
+        Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP $False -Confirm:$False | Out-Null
+        
     }
     Process {
-        ForEach ($Computer in $ComputerName) {
-            $Machines = $CMDB.Machines | Where-Object Name -Like $Computer.Split('-')[0] #Catch non-exist error
-            $Machine = $Machines.Machine | Where-Object Name -Like $Computer.Split('-')[1] #Catch non-exist error
-            $HypervisorGroup = $CMDB.Hypervisors | Where-Object Name -Like $Machine.Hypervisor.Split('-')[0]
-            $Hypervisor = $HypervisorGroup.Machine | Where-Object Name -Like $Machine.Hypervisor.Split('-')[1] #Catch non-exist error
+        ForEach ($Computer in $ComputerName) { 
+            Try {
+                $Machines = $CMDB.Machines | Where-Object Name -Like $Computer.Split('-')[0] -ErrorAction Stop
+            }
+            Catch {
+                Write-Error "Ran into an issue: $PSItem $($Computer.Split('-')[0]) not defined in configuration file for ComputerName $Computer" -ErrorAction Stop
+            }
+
+            Try {
+                $Machine = $Machines.Machine | Where-Object Name -Like $Computer.Split('-')[1] -ErrorAction Stop
+            }
+            Catch {
+                Write-Error "Ran into an issue: $PSItem $($Computer.Split('-')[1]) not defined in configuration file for ComputerName $Computer" -ErrorAction Stop
+            }
+            
+            Try {
+                $HypervisorGroup = $CMDB.Hypervisors | Where-Object Name -Like $Machine.Hypervisor.Split('-')[0]
+            }
+            Catch {
+                Write-Error "Ran into an issue: $PSItem Hypervisor Group not defined in configuration file for ComputerName $Computer" -ErrorAction Stop
+            }
+            
+            Try {
+                $Hypervisor = $HypervisorGroup.Machine | Where-Object Name -Like $Machine.Hypervisor.Split('-')[1]
+            }
+            Catch {
+                Write-Error "Ran into an issue: $PSItem Hypervisor not defined in configuration file for ComputerName $Computer" -ErrorAction Stop
+            }
+
 
             Switch -Wildcard ($HypervisorGroup.Name) {
                 "CompHypV*" { 
@@ -135,13 +159,6 @@ Function New-VMInstance {
                     }
                 }
                 "PCL*" {
-                    If ($PortForward) {
-                        $HypervisorIP = "$($HypervisorGroup.PFIPRange).$($Hypervisor.Name)"
-                        $HypervisorPort = $HypervisorGroup.PFPort
-                    }
-                    Else {
-                        $HypervisorIP = "$($HypervisorGroup.IPRange).$($Hypervisor.Name)"
-                    }
                     $MemoryGB = [decimal]$($Machine.NumCPU)
                     $NumCPU = [int32]$($Machine.NumCPU)
                     
@@ -151,7 +168,16 @@ Function New-VMInstance {
                         Write-Verbose "Memory: $MemoryGB"
                         Write-Verbose "CPU Count: $NumCPU"
 
-                        Connect-VIServer
+                        If ($PortForward) {
+                            $HypervisorIP = "$($HypervisorGroup.PFIPRange).$($Hypervisor.Name)"
+                            $HypervisorPort = $HypervisorGroup.PFPort  
+                        }
+                        Else {
+                            $HypervisorIP = "$($HypervisorGroup.IPRange).$($Hypervisor.Name)"
+                            $HypervisorPort = 443
+                        }
+
+                        Connect-VIServer -Server $HypervisorIP -Port $HypervisorPort
                         
                         VMware.VimAutomation.Core\New-VM -Name $Computer -MemoryGB $MemoryGB -NumCpu $NumCPU -GuestId $Machine.GuestID
                         <#Set-VMProcessor -VMName $Computer -Count $CPUCount -ComputerName $HypervisorFQDN
