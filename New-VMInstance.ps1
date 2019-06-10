@@ -73,23 +73,27 @@ Function New-VMInstance {
         Try {
             ForEach ($Computer in $ComputerName) { 
                 $Machines = $CMDB.Machines | Where-Object Name -Like $Computer.Split('-')[0]
-                If ($Null -eq $Machines){
+                If ($Null -eq $Machines) {
                     Write-Error "Ran into an issue: $PSItem $($Computer.Split('-')[0]) not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration"
                 }
 
                 $Machine = $Machines.Machine | Where-Object Name -Like $Computer.Split('-')[1] -ErrorAction Stop
-                If ($Null -eq $Machine){
+                If ($Null -eq $Machine) {
                     Write-Error "Ran into an issue: $PSItem $($Computer.Split('-')[1]) not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration"
                 }
 
-                $HypervisorGroup = $CMDB.Hypervisors | Where-Object Name -Like $Machine.Hypervisor.Split('-')[0]
+                If ($Machine.Hypervisor) { $Hypervisor = $Machine.Hypervisor }
+                ElseIf ($Machines.Hypervisor) { $Hypervisor = $Machines.Hypervisor }
+                Else { Write-Error "Ran into an issue: $PSItem Hypervisor not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+
+                $HypervisorGroup = $CMDB.Hypervisors | Where-Object Name -Like $Hypervisor.Split('-')[0]
                 If ($Null -eq $HypervisorGroup){
-                    Write-Error "Ran into an issue: $PSItem Hypervisor Group not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration"
+                    Write-Error "Ran into an issue: $PSItem Hypervisor Group not defined in configuration file" -RecommendedAction "Please check json configuration"
                 }
             
-                $Hypervisor = $HypervisorGroup.Machine | Where-Object Name -Like $Machine.Hypervisor.Split('-')[1]
+                $Hypervisor = $HypervisorGroup.Machine | Where-Object Name -Like $Hypervisor.Split('-')[1]
                 If ($Null -eq $Hypervisor){
-                    Write-Error "Ran into an issue: $PSItem Hypervisor not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration"
+                    Write-Error "Ran into an issue: $PSItem Hypervisor not defined in configuration file" -RecommendedAction "Please check json configuration"
                 }
 
                 Switch -Wildcard ($HypervisorGroup.Name) {
@@ -158,8 +162,18 @@ Function New-VMInstance {
                         }
                     }
                     "PCL*" {
-                        $MemoryGB = [decimal]$($Machine.NumCPU)
-                        $NumCPU = [int32]$($Machine.NumCPU)
+                        If ($Machine.NumCPU) { $NumCPU = [int32]$($Machine.NumCPU) }
+                        ElseIf ($Machines.NumCPU) { $NumCPU = [int32]$($Machines.NumCPU) }
+                        Else { Write-Error "Ran into an issue: $PSItem NumCPU not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+
+                        If ($Machine.MemoryGB) { $MemoryGB = [decimal]$($Machine.NumCPU) }
+                        ElseIf ($Machines.MemoryGB) { $MemoryGB = [decimal]$($Machines.NumCPU) }
+                        Else { Write-Error "Ran into an issue: $PSItem MemoryGB not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+
+                        If ($Machine.GuestID) { $GuestID = $($Machine.GuestID) }
+                        ElseIf ($Machines.GuestID) { $GuestID = $($Machines.GuestID) }
+                        Else { Write-Error "Ran into an issue: $PSItem GuestID not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+
                         
                         If ($PSCmdlet.ShouldProcess($Computer)) {
                             #VM
@@ -178,7 +192,7 @@ Function New-VMInstance {
 
                             Connect-VIServer -Server $HypervisorIP -Port $HypervisorPort
                             
-                            VMware.VimAutomation.Core\New-VM -Name $Computer -MemoryGB $MemoryGB -NumCpu $NumCPU -GuestId $Machine.GuestID
+                            VMware.VimAutomation.Core\New-VM -Name $Computer -NumCpu $NumCPU -MemoryGB $MemoryGB -GuestId $GuestID -NetworkName 'Virtual Machine Network'
                             <#Set-VMProcessor -VMName $Computer -Count $CPUCount -ComputerName $HypervisorFQDN
                             
                             #Default NIC
