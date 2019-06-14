@@ -1,7 +1,8 @@
 # Author: Tadhg O Briain
 # Date last modified: 14/06/2019
 
-Function Test-Valid {
+Function Test-ValidProperty {
+# Tests to see whether an objects property exists and is not empty
     Param (
         [Parameter(Mandatory=$True)]
         $Object,
@@ -9,7 +10,8 @@ Function Test-Valid {
         [Parameter(Mandatory=$True)]
         $ObjectProperty
     )
-    
+
+    (Get-Member -InputObject $Object -Name $ObjectProperty) -And $($Object.$ObjectProperty)
 }
 Function New-VMInfrastructure {     
     <#
@@ -82,40 +84,44 @@ Function New-VMInfrastructure {
     Process {
         Try {
             ForEach ($Computer in $ComputerName) { 
-                If ((Get-Member -InputObject $CMDB -Name 'Machines') -And $CMDB.Machines) { 
-                        $Machines = $CMDB.Machines | Where-Object Name -Like $Computer.Split('-')[0] 
-                        If ($Null -eq $Machines) { Write-Error "Ran into an issue: Machines $PSItem $($Computer.Split('-')[0]) not found in configuration file" -RecommendedAction "Please check json configuration" }
-                    }
+                If (Test-ValidProperty $CMDB 'Machines') { 
+                    $Machines = $CMDB.Machines | Where-Object Name -Like $Computer.Split('-')[0] 
+                    If ($Null -eq $Machines) { Write-Error "Ran into an issue: Machines $($Computer.Split('-')[0]) not found in configuration file" -RecommendedAction "Please check json configuration" }
+                }
                 Else {
-                    Write-Error "Ran into an issue: Machines $PSItem $($Computer.Split('-')[0]) not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration"
+                    Write-Error "Ran into an issue: Machines $($Computer.Split('-')[0]) not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration"
                 }
 
-                If ((Get-Member -InputObject $Machines -Name 'Machine') -And $Machines.Machine) {
+                If (Test-ValidProperty $Machines 'Machine') {
                     $Machine = $Machines.Machine | Where-Object Name -Like $Computer.Split('-')[1]
-                    If ($Null -eq $Machine) { Write-Error "Ran into an issue: $PSItem $($Computer.Split('-')[1]) not found in configuration file for machines $PSItem $($Computer.Split('-')[0])" -RecommendedAction "Please check json configuration" }
+                    If ($Null -eq $Machine) { Write-Error "Ran into an issue: $($Computer.Split('-')[1]) not found in configuration file for machines $($Computer.Split('-')[0])" -RecommendedAction "Please check json configuration" }
                 }
                 Else {
-                    Write-Error "Ran into an issue: $PSItem $($Computer.Split('-')[1]) not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration"
+                    Write-Error "Ran into an issue: $($Computer.Split('-')[1]) not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration"
                 }
 
                 # Check is there a hypervisor defined on either machines or machine, precedence given to machine property
                 $VMHypervisor = $Null
-                If ((Get-Member -InputObject $Machines -Name 'Hypervisor') -And $Machines.Hypervisor) { $VMHypervisor = $Machines.Hypervisor }
-                If ((Get-Member -InputObject $Machine -Name 'Hypervisor') -And $Machine.Hypervisor) { $VMHypervisor = $Machine.Hypervisor }
-                If ($Null -eq $VMHypervisor) { Write-Error "Ran into an issue: $PSItem Hypervisor not defined, blank or not found in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
-
+                If (Test-ValidProperty $Machines 'Hypervisor') { $VMHypervisor = $Machines.Hypervisor }
+                If (Test-ValidProperty $Machine 'Hypervisor') { $VMHypervisor = $Machine.Hypervisor }
+                If ($Null -eq $VMHypervisor) { Write-Error "Ran into an issue: Hypervisor not defined, blank or not found in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                
                 # Get the hypervisor group details based on VMHypervisor
                 $HypervisorGroup = $CMDB.Hypervisors | Where-Object Name -Like $VMHypervisor.Split('-')[0]
                 If ($Null -eq $HypervisorGroup){
-                    Write-Error "Ran into an issue: $PSItem Hypervisor Group $($VMHypervisor.Split('-')[0]) not defined in configuration file" -RecommendedAction "Please check json configuration"
+                    Write-Error "Ran into an issue: Hypervisor Group $($VMHypervisor.Split('-')[0]) not found in configuration file" -RecommendedAction "Please check json configuration"
                 }
             
                 # Get the hypervisor details based on VMHypervisor
                 $Hypervisor = $HypervisorGroup.Machine | Where-Object Name -Like $VMHypervisor.Split('-')[1]
                 If ($Null -eq $Hypervisor){
-                    Write-Error "Ran into an issue: $PSItem Hypervisor $VMHypervisor not defined in configuration file" -RecommendedAction "Please check json configuration"
+                    Write-Error "Ran into an issue: Hypervisor $VMHypervisor not found in configuration file" -RecommendedAction "Please check json configuration"
                 }
+
                 # Check is the hypervisor type defined
+                If (!Test-ValidProperty $HypervisorGroup 'Type') {
+                    Write-Error "Ran into an issue: HypervisorGroup Type not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration"
+                }
 
 
                 Switch -Wildcard ($HypervisorGroup.Type) {
@@ -236,44 +242,14 @@ Function New-VMInfrastructure {
                             Connect-VIServer -Server $HypervisorIP -Port $HypervisorPort
                             
                             VMware.VimAutomation.Core\New-VM -Name $Computer -NumCpu $NumCPU -MemoryGB $MemoryGB -GuestId $GuestID -Portgroup $PortGroup
-                            <#Set-VMProcessor -VMName $Computer -Count $CPUCount -ComputerName $HypervisorFQDN
-                            
-                            #Default NIC
-                            If ( $Machine.DefaultNIC.MACType -eq 'Static') {
-                                Write-Verbose "Setting default NIC to 'STATIC' with MAC address $($Machine.DefaultNIC.Mac)"
-                                Set-VMNetworkAdapter -VMName $Computer -StaticMacAddress $Machine.DefaultNIC.Mac -DhcpGuard $Machine.DefaultNIC.DHCPGuard -RouterGuard $Machine.DefaultNIC.RouterGuard -MacAddressSpoofing $Machine.DefaultNIC.MacAddressSpoofing -ComputerName $HypervisorFQDN
-                            }
-                            Else {
-                                Set-VMNetworkAdapter -VMName $Computer -DhcpGuard $Machine.DefaultNIC.DHCPGuard -RouterGuard $Machine.DefaultNIC.RouterGuard -MacAddressSpoofing $Machine.DefaultNIC.MacAddressSpoofing -ComputerName $HypervisorFQDN 
-                            }
-                            
-                            Write-Verbose "DHCP Guard: $($Machine.DefaultNIC.DHCPGuard)"
-                            Write-Verbose "Router Guard: $($Machine.DefaultNIC.RouterGuard)"
-                            Write-Verbose "MAC Address Spoofing: $($Machine.DefaultNIC.MacAddressSpoofing)"
-            
-                            #VHDs
-                            ForEach ($VHD in $Machine.VHDs) {
-                                Write-Output "Creating new VHD(s) for VM instance: $Computer"  
-                                $ControllerLocation = [Int32]$($VHD.ControllerLocation)
-        
-                                Switch -Wildcard ( $VHD.SizeBytes ){
-                                    '*GB' { $SizeBytes = [uint64]$($VHD.SizeBytes).Replace('GB','') * 1GB }
-                                    '*TB' { $SizeBytes = [uint64]$($VHD.SizeBytes).Replace('TB','') * 1TB }
-                                    Default { Write-Error -Message "No unit (MB/GB/TB) associated with VHD size in JSON for $Computer"}
-                                }
-            
-                                If ($VHD.Type -eq 'Fixed') { 
-                                    New-VHD -Path "$VHDPath\$Computer\$Computer-$($VHD.Name).vhdx" -SizeBytes $SizeBytes -Fixed -ComputerName $HypervisorFQDN  
-                                }
-                                Else { New-VHD -Path "$VHDPath\$Computer\$Computer-$($VHD.Name).vhdx" -SizeBytes $SizeBytes -ComputerName $HypervisorFQDN }
-            
-                                Add-VMHardDiskDrive -VMName $Computer -Path "$($Hypervisor.VHDPath)\$Computer\$Computer-$($VHD.Name).vhdx" -ControllerLocation $ControllerLocation -ComputerName $HypervisorFQDN
-                            
-                            # Need to code for multiple NICs
+                            <#
+                            # Disks
+                               
+                            # NICs
                             } #>
                         }
                     }
-                    Default { Write-Error "Ran into an issue: $PSItem Hypervisor $($HypervisorGroup.Name) defined for ComputerName $Computer not a recognised hypervisor" -RecommendedAction "Please check json configuration" }
+                    Default { Write-Error "Ran into an issue: Hypervisor $($HypervisorGroup.Type) defined for ComputerName $Computer not a recognised hypervisor" -RecommendedAction "Please check json configuration" }
                 }  
             }
         }
