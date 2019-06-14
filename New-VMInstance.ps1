@@ -1,11 +1,22 @@
- # Author: Tadhg O Briain
-# Date last modified: 06/06/2019
-Function New-VMInstance {     
+# Author: Tadhg O Briain
+# Date last modified: 14/06/2019
+
+Function Test-Valid {
+    Param (
+        [Parameter(Mandatory=$True)]
+        $Object,
+
+        [Parameter(Mandatory=$True)]
+        $ObjectProperty
+    )
+    
+}
+Function New-VMInfrastructure {     
     <#
     .Synopsis
-        Creates a new VM (if not already present) based on description in CMDB_Server.json
+        Creates a new piece of virtual infrastructure based on description in provided configuration file
     .DESCRIPTION
-        
+        (if not already present) JSON
     .EXAMPLE
         Example of how to use this cmdlet
     .EXAMPLE
@@ -15,7 +26,6 @@ Function New-VMInstance {
     [CmdletBinding(SupportsShouldProcess,ConfirmImpact='High')]
     [OutputType([int])]
     [Alias()]
-    [OutputType([int])]
 
     Param (
         # Param1 help description
@@ -88,7 +98,7 @@ Function New-VMInstance {
                     Write-Error "Ran into an issue: $PSItem $($Computer.Split('-')[1]) not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration"
                 }
 
-                # Check is there a hypervisor defined on either machines or machine, precedence given to machine hypervisor
+                # Check is there a hypervisor defined on either machines or machine, precedence given to machine property
                 $VMHypervisor = $Null
                 If ((Get-Member -InputObject $Machines -Name 'Hypervisor') -And $Machines.Hypervisor) { $VMHypervisor = $Machines.Hypervisor }
                 If ((Get-Member -InputObject $Machine -Name 'Hypervisor') -And $Machine.Hypervisor) { $VMHypervisor = $Machine.Hypervisor }
@@ -105,9 +115,11 @@ Function New-VMInstance {
                 If ($Null -eq $Hypervisor){
                     Write-Error "Ran into an issue: $PSItem Hypervisor $VMHypervisor not defined in configuration file" -RecommendedAction "Please check json configuration"
                 }
+                # Check is the hypervisor type defined
 
-                Switch -Wildcard ($HypervisorGroup.Name) {
-                    "CompHypV*" { 
+
+                Switch -Wildcard ($HypervisorGroup.Type) {
+                    "HyperV" { 
                         Switch -Wildcard ( $Machine.MemoryStartupBytes ){
                             '*MB' { $MemoryStartupBytes = [int64]$($Machine.MemoryStartupBytes).Replace('MB','') * 1MB }
                             '*GB' { $MemoryStartupBytes = [int64]$($Machine.MemoryStartupBytes).Replace('GB','') * 1GB }
@@ -171,20 +183,27 @@ Function New-VMInstance {
                             }
                         }
                     }
-                    "PCL*" {
-                        If ($Machine.NumCPU) { $NumCPU = [int32]$($Machine.NumCPU) }
-                        ElseIf ($Machines.NumCPU) { $NumCPU = [int32]$($Machines.NumCPU) }
-                        Else { Write-Error "Ran into an issue: $PSItem NumCPU not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                    "ESXi" {
+                        # Check is NumCPU defined on either machines or machine, precedence given to machine property
+                        $NumCPU = $Null # Might need this if doing diff machine groups. Check scoping
+                        If ((Get-Member -InputObject $Machines -Name 'NumCPU') -And $Machines.NumCPU) { $NumCPU = [int32]$($Machines.NumCPU) }
+                        If ((Get-Member -InputObject $Machine -Name 'NumCPU') -And $Machine.NumCPU) { $NumCPU = [int32]$($Machine.NumCPU) }
+                        If ($Null -eq $NumCPU) { Write-Error "Ran into an issue: NumCPU not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
 
-                        If ($Machine.MemoryGB) { $MemoryGB = [decimal]$($Machine.NumCPU) }
-                        ElseIf ($Machines.MemoryGB) { $MemoryGB = [decimal]$($Machines.NumCPU) }
-                        Else { Write-Error "Ran into an issue: $PSItem MemoryGB not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                        # Check is MemoryGB defined on either machines or machine, precedence given to machine property
+                        $MemoryGB = $Null # Might need this if doing diff machine groups. Check scoping
+                        If ((Get-Member -InputObject $Machines -Name 'MemoryGB') -And $Machines.MemoryGB) { $MemoryGB = [decimal]$($Machines.NumCPU) }
+                        If ((Get-Member -InputObject $Machine -Name 'MemoryGB') -And $Machine.MemoryGB) { $MemoryGB = [decimal]$($Machine.NumCPU) }
+                        If ($Null -eq $MemoryGB) { Write-Error "Ran into an issue: MemoryGB not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
 
-                        If ($Machine.GuestID) { $GuestID = $($Machine.GuestID) }
-                        ElseIf ($Machines.GuestID) { $GuestID = $($Machines.GuestID) }
-                        Else { Write-Error "Ran into an issue: $PSItem GuestID not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                        # Check is GuestID defined on either machines or machine, precedence given to machine property
+                        $GuestID = $Null # Might need this if doing diff machine groups. Check scoping
+                        If ((Get-Member -InputObject $Machines -Name 'GuestID') -And $Machines.GuestID) { $GuestID = $($Machines.GuestID) }
+                        If ((Get-Member -InputObject $Machine -Name 'GuestID') -And $Machine.GuestID) { $GuestID = $($Machine.GuestID) }
+                        If ($Null -eq $GuestID) { Write-Error "Ran into an issue: GuestID not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                        
 
-                        #PortGroups
+                        <#PortGroups
                         If ($Machine.PortGroup) { 
                             ForEach ($Portgroup in $Machine.PortGroups) {
                                 $PortGroup += $($Machine.PortGroup.Name) 
@@ -196,13 +215,14 @@ Function New-VMInstance {
                             }
                         }
                         Else { Write-Error "Ran into an issue: $PSItem PortGroup not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
-
+                        #>
 
                         If ($PSCmdlet.ShouldProcess($Computer)) {
                             #VM
                             Write-Output "Creating new VM instance: $Computer on $($Hypervisor.Name)"
                             Write-Verbose "Memory: $MemoryGB"
                             Write-Verbose "CPU Count: $NumCPU"
+                            Write-Verbose "CPU Count: $GuestID"
 
                             If ($PortForward) {
                                 $HypervisorIP = "$($HypervisorGroup.PFIPRange).$($Hypervisor.Name)"
