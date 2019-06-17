@@ -76,6 +76,7 @@ Function New-VMInfrastructure {
             $CMDB = Get-Content -Raw -Path $ConfigurationFile | ConvertFrom-Json
 
             Set-PowerCLIConfiguration -Scope AllUsers -ParticipateInCEIP $False -Confirm:$False | Out-Null
+            Set-PowerCLIConfiguration -InvalidCertificateAction Ignore -Confirm:$False | Out-Null
         }
         Catch {
             $PSCmdlet.ThrowTerminatingError($PSItem)
@@ -119,7 +120,7 @@ Function New-VMInfrastructure {
                 }
 
                 # Check is the hypervisor type defined
-                If (!Test-ValidProperty $HypervisorGroup 'Type') {
+                If (!(Test-ValidProperty $HypervisorGroup 'Type')) {
                     Write-Error "Ran into an issue: HypervisorGroup Type not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration"
                 }
 
@@ -192,36 +193,29 @@ Function New-VMInfrastructure {
                     "ESXi" {
                         # Check is NumCPU defined on either machines or machine, precedence given to machine property
                         $NumCPU = $Null # Might need this if doing diff machine groups. Check scoping
-                        If ((Get-Member -InputObject $Machines -Name 'NumCPU') -And $Machines.NumCPU) { $NumCPU = [int32]$($Machines.NumCPU) }
-                        If ((Get-Member -InputObject $Machine -Name 'NumCPU') -And $Machine.NumCPU) { $NumCPU = [int32]$($Machine.NumCPU) }
+                        If (Test-ValidProperty $Machines 'NumCPU') { $NumCPU = [int32]$($Machines.NumCPU) }
+                        If (Test-ValidProperty $Machine 'NumCPU') { $NumCPU = [int32]$($Machine.NumCPU) }
                         If ($Null -eq $NumCPU) { Write-Error "Ran into an issue: NumCPU not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
 
                         # Check is MemoryGB defined on either machines or machine, precedence given to machine property
                         $MemoryGB = $Null # Might need this if doing diff machine groups. Check scoping
-                        If ((Get-Member -InputObject $Machines -Name 'MemoryGB') -And $Machines.MemoryGB) { $MemoryGB = [decimal]$($Machines.NumCPU) }
-                        If ((Get-Member -InputObject $Machine -Name 'MemoryGB') -And $Machine.MemoryGB) { $MemoryGB = [decimal]$($Machine.NumCPU) }
+                        If (Test-ValidProperty $Machines 'MemoryGB') { $MemoryGB = [decimal]$($Machines.NumCPU) }
+                        If (Test-ValidProperty $Machine 'MemoryGB') { $MemoryGB = [decimal]$($Machine.NumCPU) }
                         If ($Null -eq $MemoryGB) { Write-Error "Ran into an issue: MemoryGB not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
 
                         # Check is GuestID defined on either machines or machine, precedence given to machine property
                         $GuestID = $Null # Might need this if doing diff machine groups. Check scoping
-                        If ((Get-Member -InputObject $Machines -Name 'GuestID') -And $Machines.GuestID) { $GuestID = $($Machines.GuestID) }
-                        If ((Get-Member -InputObject $Machine -Name 'GuestID') -And $Machine.GuestID) { $GuestID = $($Machine.GuestID) }
+                        If (Test-ValidProperty $Machines 'GuestID') { $GuestID = $($Machines.GuestID) }
+                        If (Test-ValidProperty $Machine 'GuestID') { $GuestID = $($Machine.GuestID) }
                         If ($Null -eq $GuestID) { Write-Error "Ran into an issue: GuestID not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
                         
 
-                        <#PortGroups
-                        If ($Machine.PortGroup) { 
-                            ForEach ($Portgroup in $Machine.PortGroups) {
-                                $PortGroup += $($Machine.PortGroup.Name) 
-                            }
-                        }
-                        ElseIf ($Machines.PortGroup) { 
-                            ForEach ($Portgroup in $Machines.PortGroups) {
-                                $PortGroup = $($Machine.PortGroup) 
-                            }
-                        }
-                        Else { Write-Error "Ran into an issue: $PSItem PortGroup not defined in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
-                        #>
+                        # Check is PortGroups defined on either machines or machine, precedence given to machine property
+                        $PortGroups = $Null
+                        If (Test-ValidProperty $Machines 'PortGroups') { $PortGroups = $($Machines.PortGroups) }
+                        If (Test-ValidProperty $Machine 'PortGroups') { $PortGroups = $($Machine.PortGroups) }
+                        If ($Null -eq $PortGroups) { Write-Error "Ran into an issue: PortGroups not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                      
 
                         If ($PSCmdlet.ShouldProcess($Computer)) {
                             #VM
@@ -229,6 +223,7 @@ Function New-VMInfrastructure {
                             Write-Verbose "Memory: $MemoryGB"
                             Write-Verbose "CPU Count: $NumCPU"
                             Write-Verbose "CPU Count: $GuestID"
+                            ForEach ($Portgroup in $PortGroups) { Write-Verbose "Portgroup: $($Portgroup.Name)" }
 
                             If ($PortForward) {
                                 $HypervisorIP = "$($HypervisorGroup.PFIPRange).$($Hypervisor.Name)"
@@ -241,12 +236,18 @@ Function New-VMInfrastructure {
 
                             Connect-VIServer -Server $HypervisorIP -Port $HypervisorPort
                             
-                            VMware.VimAutomation.Core\New-VM -Name $Computer -NumCpu $NumCPU -MemoryGB $MemoryGB -GuestId $GuestID -Portgroup $PortGroup
+                            VMware.VimAutomation.Core\New-VM -Name $Computer -NumCpu $NumCPU -MemoryGB $MemoryGB -GuestId $GuestID
+
+                            # NICs
+                            ForEach ($Portgroup in $PortGroups) {
+                                $PG = Get-VirtualPortGroup -Name $($Portgroup.Name)
+                                New-NetworkAdapter -VM $Computer -Portgroup $PG -StartConnected -Confirm:$False
+                            }
                             <#
                             # Disks
                                
-                            # NICs
-                            } #>
+                            
+                            #>
                         }
                     }
                     Default { Write-Error "Ran into an issue: Hypervisor $($HypervisorGroup.Type) defined for ComputerName $Computer not a recognised hypervisor" -RecommendedAction "Please check json configuration" }
