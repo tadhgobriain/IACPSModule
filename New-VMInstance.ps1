@@ -65,7 +65,11 @@ Function New-VMInfrastructure {
 
         # Param3 help description
         [Parameter(Mandatory=$False)]
-        [Switch]$PortForward
+        [Switch]$PortForward,
+
+        # Param4 help description
+        [Parameter(Mandatory=$False)]
+        [Switch]$Force
     )
 
     Begin {
@@ -216,31 +220,49 @@ Function New-VMInfrastructure {
                         If (Test-ValidProperty $Machine 'PortGroups') { $PortGroups = $($Machine.PortGroups) }
                         If ($Null -eq $PortGroups) { Write-Error "Ran into an issue: PortGroups not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
                       
+                        #VM
+                        Write-Output "Creating new VM instance: $Computer on $($Hypervisor.Name)"
+                        Write-Verbose "Memory: $MemoryGB"
+                        Write-Verbose "CPU Count: $NumCPU"
+                        Write-Verbose "CPU Count: $GuestID"
+                        ForEach ($Portgroup in $PortGroups) { Write-Verbose "Portgroup: $($Portgroup.Name)" }
 
                         If ($PSCmdlet.ShouldProcess($Computer)) {
-                            #VM
-                            Write-Output "Creating new VM instance: $Computer on $($Hypervisor.Name)"
-                            Write-Verbose "Memory: $MemoryGB"
-                            Write-Verbose "CPU Count: $NumCPU"
-                            Write-Verbose "CPU Count: $GuestID"
-                            ForEach ($Portgroup in $PortGroups) { Write-Verbose "Portgroup: $($Portgroup.Name)" }
-
+                            
                             If ($PortForward) {
+                                $PFIPRange = $Null
+                                If (Test-ValidProperty $HypervisorGroup 'PFIPRange') { $PFIPRange = $($HypervisorGroup.PFIPRange) }
+                                If (Test-ValidProperty $Hypervisor 'PFIPRange') { $PFIPRange = $($Hypervisor.$PFIPRange) }
+                                If ($Null -eq $PFIPRange) { Write-Error "Ran into an issue: PFIPRange not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                      
                                 $HypervisorIP = "$($HypervisorGroup.PFIPRange).$($Hypervisor.Name)"
                                 $HypervisorPort = $HypervisorGroup.PFPort  
                             }
                             Else {
+                                If (Test-ValidProperty $Machines 'PortGroups') { $PortGroups = $($Machines.PortGroups) }
+                                If (Test-ValidProperty $Machine 'PortGroups') { $PortGroups = $($Machine.PortGroups) }
+                                If ($Null -eq $PortGroups) { Write-Error "Ran into an issue: PortGroups not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                      
                                 $HypervisorIP = "$($HypervisorGroup.IPRange).$($Hypervisor.Name)"
                                 $HypervisorPort = 443
                             }
 
                             Connect-VIServer -Server $HypervisorIP -Port $HypervisorPort
                             
-                            VMware.VimAutomation.Core\New-VM -Name $Computer -NumCpu $NumCPU -MemoryGB $MemoryGB -GuestId $GuestID
+                            If (!(Get-VM -Name $Computer)) { 
+                                VMware.VimAutomation.Core\New-VM -Name $Computer -NumCpu $NumCPU -MemoryGB $MemoryGB -GuestId $GuestID
+                            }
+                            ElseIf ((Get-VM -Name $Computer) -And $Force -And ($PSCmdlet.ShouldContinue($Computer, 'Overwriting existing VM with same name')) {
+                                VMware.VimAutomation.Core\Remove-VM VM -DeletePermanently -Confirm:$False
+                                VMware.VimAutomation.Core\New-VM -Name $Computer -NumCpu $NumCPU -MemoryGB $MemoryGB -GuestId $GuestID
+                            }
+                            Else { Write-Error "Ran into an issue: $Computer already exists on $Hypervisor" -RecommendedAction "Please check json configuration" }
 
                             # NICs
                             ForEach ($Portgroup in $PortGroups) {
-                                $PG = Get-VirtualPortGroup -Name $($Portgroup.Name)
+                                $PG = Get-VirtualPortGroup -Name $($Portgroup.Name) #checkexist
+                                $MAC = ($Machines.MACRoot + '-' + $Machine.MAC) -replace ':','-' #checkexist
+                                Write-Verbose "New network Adapter: Portgroup $PG, MAC $MAC"
                                 New-NetworkAdapter -VM $Computer -Portgroup $PG -StartConnected -Confirm:$False
                             }
                             <#
