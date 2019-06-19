@@ -250,9 +250,9 @@ Function New-VMInfrastructure {
 
                             Connect-VIServer -Server $HypervisorIP -Port $HypervisorPort
                             
-                            $VMExist = VMware.VimAutomation.Core\Get-VM -Name $Computer -ErrorAction SilentlyContinue
+                            $VM = VMware.VimAutomation.Core\Get-VM -Name $Computer -ErrorAction SilentlyContinue
 
-                            If (!$VMExist) { 
+                            If (!$VM) { 
                                 VMware.VimAutomation.Core\New-VM -Name $Computer -NumCpu $NumCPU -MemoryGB $MemoryGB -GuestId $GuestID
                             
                                 # NICs
@@ -276,6 +276,7 @@ Function New-VMInfrastructure {
                             ElseIf ($Force -And ($PSCmdlet.ShouldContinue($Computer, 'Overwrite existing VM with same name?'))) {
                                 # Check is the VM powered on
                                 If ($VM.PowerState -eq 'PoweredOn') {
+                                    Write-Output "VM $VM is powered on. Shutting VM down"
                                     VMware.VimAutomation.Core\Stop-VM -Kill $VM -Confirm:$False
                                 }
                                 #Wait for Shutdown to complete
