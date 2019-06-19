@@ -13,6 +13,11 @@ Function Test-ValidProperty {
 
     (Get-Member -InputObject $Object -Name $ObjectProperty) -And $($Object.$ObjectProperty)
 }
+
+Function New-NetworkInfrastructure {
+
+}
+
 Function New-VMInfrastructure {     
     <#
     .Synopsis
@@ -221,7 +226,7 @@ Function New-VMInfrastructure {
                         If ($Null -eq $PortGroups) { Write-Error "Ran into an issue: PortGroups not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
                       
                         #VM
-                        Write-Output "Creating new VM instance: $Computer on $($Hypervisor.Name)"
+                        Write-Output "Creating new VM instance: $Computer on $($HypervisorGroup.Name)-$($Hypervisor.Name)"
                         Write-Verbose "Memory: $MemoryGB"
                         Write-Verbose "CPU Count: $NumCPU"
                         Write-Verbose "CPU Count: $GuestID"
@@ -230,46 +235,79 @@ Function New-VMInfrastructure {
                         If ($PSCmdlet.ShouldProcess($Computer)) {
                             
                             If ($PortForward) {
-                                $PFIPRange = $Null
-                                If (Test-ValidProperty $HypervisorGroup 'PFIPRange') { $PFIPRange = $($HypervisorGroup.PFIPRange) }
-                                If (Test-ValidProperty $Hypervisor 'PFIPRange') { $PFIPRange = $($Hypervisor.$PFIPRange) }
-                                If ($Null -eq $PFIPRange) { Write-Error "Ran into an issue: PFIPRange not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
-                      
-                                $HypervisorIP = "$($HypervisorGroup.PFIPRange).$($Hypervisor.Name)"
-                                $HypervisorPort = $HypervisorGroup.PFPort  
+                                If (Test-ValidProperty $HypervisorGroup 'PFIPRange') { $HypervisorIP = "$($HypervisorGroup.PFIPRange).$($Hypervisor.Name)" }
+                                Else { Write-Error "Ran into an issue: PFIPRange not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                                
+                                If (Test-ValidProperty $HypervisorGroup 'PFPort') { $HypervisorPort = $HypervisorGroup.PFPort }
+                                Else { Write-Error "Ran into an issue: PFPort not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }    
                             }
                             Else {
-                                If (Test-ValidProperty $Machines 'PortGroups') { $PortGroups = $($Machines.PortGroups) }
-                                If (Test-ValidProperty $Machine 'PortGroups') { $PortGroups = $($Machine.PortGroups) }
-                                If ($Null -eq $PortGroups) { Write-Error "Ran into an issue: PortGroups not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
-                      
-                                $HypervisorIP = "$($HypervisorGroup.IPRange).$($Hypervisor.Name)"
+                                If (Test-ValidProperty $HypervisorGroup 'IPRange') { $HypervisorIP = "$($HypervisorGroup.IPRange).$($Hypervisor.Name)" }
+                                Else { Write-Error "Ran into an issue: IPRange not defined or blank in configuration file for ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                               
                                 $HypervisorPort = 443
                             }
 
                             Connect-VIServer -Server $HypervisorIP -Port $HypervisorPort
                             
-                            If (!(Get-VM -Name $Computer)) { 
-                                VMware.VimAutomation.Core\New-VM -Name $Computer -NumCpu $NumCPU -MemoryGB $MemoryGB -GuestId $GuestID
-                            }
-                            ElseIf ((Get-VM -Name $Computer) -And $Force -And ($PSCmdlet.ShouldContinue($Computer, 'Overwriting existing VM with same name')) {
-                                VMware.VimAutomation.Core\Remove-VM VM -DeletePermanently -Confirm:$False
-                                VMware.VimAutomation.Core\New-VM -Name $Computer -NumCpu $NumCPU -MemoryGB $MemoryGB -GuestId $GuestID
-                            }
-                            Else { Write-Error "Ran into an issue: $Computer already exists on $Hypervisor" -RecommendedAction "Please check json configuration" }
+                            $VMExist = VMware.VimAutomation.Core\Get-VM -Name $Computer -ErrorAction SilentlyContinue
 
-                            # NICs
-                            ForEach ($Portgroup in $PortGroups) {
-                                $PG = Get-VirtualPortGroup -Name $($Portgroup.Name) #checkexist
-                                $MAC = ($Machines.MACRoot + '-' + $Machine.MAC) -replace ':','-' #checkexist
-                                Write-Verbose "New network Adapter: Portgroup $PG, MAC $MAC"
-                                New-NetworkAdapter -VM $Computer -Portgroup $PG -StartConnected -Confirm:$False
-                            }
-                            <#
-                            # Disks
-                               
+                            If (!$VMExist) { 
+                                VMware.VimAutomation.Core\New-VM -Name $Computer -NumCpu $NumCPU -MemoryGB $MemoryGB -GuestId $GuestID
                             
-                            #>
+                                # NICs
+                                ForEach ($Portgroup in $PortGroups) {
+                                    If (Test-ValidProperty $PortGroup 'Name') { $PG = Get-VirtualPortGroup -Name $($Portgroup.Name) }
+                                    Else { Write-Error "Ran into an issue: Portgroup name not defined or blank in configuration file for Portgroup $Portgroup associated with ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                                    
+                                    If ((Test-ValidProperty $Machines 'MACRoot') -And (Test-ValidProperty $Machine 'MAC')) {
+                                        $MACAddress = ($Machines.MACRoot + '-' + $Machine.MAC) -replace '-',':'
+                                    }
+                                    Else { Write-Error "Ran into an issue: MACRoot or MAC not defined or blank in configuration file for Portgroup $Portgroup associated with ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                                    
+                                    Write-Verbose "New network Adapter: Portgroup $PG, MAC $MACAddress"
+                                    New-NetworkAdapter -VM $Computer -Portgroup $PG -MacAddress $MACAddress -StartConnected -WakeOnLan -Confirm:$False
+                                }
+                                <#
+                                # Disks
+                                
+                                #>
+                            }
+                            ElseIf ($Force -And ($PSCmdlet.ShouldContinue($Computer, 'Overwrite existing VM with same name?'))) {
+                                # Check is the VM powered on
+                                If ($VM.PowerState -eq 'PoweredOn') {
+                                    VMware.VimAutomation.Core\Stop-VM -Kill $VM -Confirm:$False
+                                }
+                                #Wait for Shutdown to complete
+                                Do {
+                                #Wait 5 seconds
+                                Start-Sleep -s 5
+                                # Check the power status
+                                $VM = VMware.VimAutomation.Core\Get-VM -Name $VM
+                                }
+                                Until ($VM.PowerState -eq "PoweredOff")
+                                VMware.VimAutomation.Core\Remove-VM -VM $VM -DeletePermanently -Confirm:$False
+                                VMware.VimAutomation.Core\New-VM -Name $Computer -NumCpu $NumCPU -MemoryGB $MemoryGB -GuestId $GuestID
+                            
+                                # NICs
+                                ForEach ($Portgroup in $PortGroups) {
+                                    If (Test-ValidProperty $PortGroup 'Name') { $PG = Get-VirtualPortGroup -Name $($Portgroup.Name) }
+                                    Else { Write-Error "Ran into an issue: Portgroup name not defined or blank in configuration file for Portgroup $Portgroup associated with ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                                    
+                                    If ((Test-ValidProperty $Machines 'MACRoot') -And (Test-ValidProperty $Machine 'MAC')) {
+                                        $MACAddress = ($Machines.MACRoot + '-' + $Machine.MAC) -replace '-',':'
+                                    }
+                                    Else { Write-Error "Ran into an issue: MACRoot or MAC not defined or blank in configuration file for Portgroup $Portgroup associated with ComputerName $Computer" -RecommendedAction "Please check json configuration" }
+                                    
+                                    Write-Verbose "New network Adapter: Portgroup $PG, MAC $MACAddress"
+                                    New-NetworkAdapter -VM $Computer -Portgroup $PG -MacAddress $MACAddress -StartConnected -WakeOnLan -Confirm:$False
+                                }
+                                <#
+                                # Disks
+                                
+                                #>
+                            }
+                            Else { Write-Error "Ran into an issue: $Computer already exists on $($HypervisorGroup.Name)-$($Hypervisor.Name)" -RecommendedAction "Please check json configuration" }
                         }
                     }
                     Default { Write-Error "Ran into an issue: Hypervisor $($HypervisorGroup.Type) defined for ComputerName $Computer not a recognised hypervisor" -RecommendedAction "Please check json configuration" }
